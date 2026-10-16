@@ -21,8 +21,7 @@
 </script>
 <script>
 /* ===== Settings: paste the Apps Script web app URL (ends in /exec) ===== */
-var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec
-";
+var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec";
 var NEEDS_SERVICE = 1;
 </script>
 <style>
@@ -402,12 +401,13 @@ var NEEDS_SERVICE = 1;
   /* ------------------------------------------------ talking to the service */
   function post(body, opts) {
     opts = opts || {};
-    if (!/^https:\/\/script\.google\.com\//.test(SERVICE_URL)) return Promise.reject(new Error("notset"));
+    var url = String(window.SERVICE_URL || "").trim();
+    if (!/^https:\/\/script\.google\.com\/\S+\/exec$/.test(url)) return Promise.reject(new Error("notset"));
     var tries = opts.tries || 1, limit = opts.timeout || 20000;
     function once(n) {
       var ctrl = window.AbortController ? new AbortController() : null;
       var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, limit) : null;
-      return fetch(SERVICE_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined })
+      return fetch(url, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined })
         .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
         .then(function (j) { if (j && j.version && j.version < NEEDS_SERVICE) $("#verBanner").hidden = false; return j; })
         .catch(function (e) { if (n < tries) return once(n + 1); throw e; })
@@ -432,7 +432,7 @@ var NEEDS_SERVICE = 1;
   };
   function errText(j) {
     if (j instanceof Error) {
-      if (j.message === "notset") return "Range Radio isn't set up yet (no service URL).";
+      if (j.message === "notset") return "Range Radio isn't set up yet: the service URL near the top of index.html is missing or broken.";
       return "Couldn't reach Range Radio. Check your signal and try again.";
     }
     if (!j) return "Something went wrong.";
