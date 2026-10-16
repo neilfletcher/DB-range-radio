@@ -22,7 +22,7 @@
 <script>
 /* ===== Settings: paste the Apps Script web app URL (ends in /exec) ===== */
 var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec";
-var NEEDS_SERVICE = 5;
+var NEEDS_SERVICE = 7;
 </script>
 <style>
   :root {
@@ -161,6 +161,11 @@ var NEEDS_SERVICE = 5;
   .dev { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
   .dev:first-child { border-top: 0; }
   .dev .btn { white-space: nowrap; }
+  .dev .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .spk { border-radius: 12px; padding: 12px 14px; background: var(--surface-2); font-size: 15px; }
+  .spk.on { background: var(--ok-bg); color: var(--ok-text); }
+  .spk.off { background: var(--warn-bg); color: var(--warn-text); }
+  .pill { font-size: 12px; border-radius: 999px; padding: 2px 8px; background: var(--ok-bg); color: var(--ok-text); white-space: nowrap; }
   #qr { background: #fff; padding: 12px; border-radius: 12px; display: inline-block; margin-top: 10px; }
   #qr img, #qr canvas { display: block; width: 200px; height: 200px; }
   input[type=range] { width: 100%; accent-color: var(--brand); }
@@ -300,15 +305,20 @@ var NEEDS_SERVICE = 5;
           <a class="btn line" id="adOpenPicks" target="_blank" rel="noopener" hidden>Members' picks</a>
         </div>
         <div class="row" style="margin-top:10px">
-          <button class="btn ghost" type="button" id="adStart">Play archery playlist</button>
+          <button class="btn ghost" type="button" id="adStart">Play archery playlist on the club speaker</button>
           <button class="btn ghost" type="button" id="adStartPicks">Play members' picks</button>
         </div>
         <div class="status" id="adPlStatus"></div>
       </section>
 
       <section class="card">
-        <h2>Speaker phone</h2>
-        <p class="small muted">Open Spotify on the phone connected to the speaker. It shows here once Spotify is open.</p>
+        <h2>Speaker</h2>
+        <div class="spk" id="adSpk"></div>
+        <div class="row" style="margin:10px 0 4px">
+          <button class="btn sm" type="button" id="adSpkOn" hidden>Switch on</button>
+          <button class="btn sm line" type="button" id="adSpkOff">No speaker (switch off)</button>
+        </div>
+        <p class="small muted" style="margin-top:12px">Spotify devices that are open right now. Only the club speaker ever plays for members; the others are test speakers that only play when you press Play here.</p>
         <div id="adDevices"><p class="empty">No devices found.</p></div>
         <label for="adVol">Volume <span id="adVolVal"></span></label>
         <input type="range" id="adVol" min="0" max="100" step="5">
@@ -339,6 +349,8 @@ var NEEDS_SERVICE = 5;
             <div><label for="sPer">Songs each person can add</label><input type="number" id="sPer" min="1" max="20"></div>
             <div><label for="sWin">…every this many minutes</label><input type="number" id="sWin" min="5" max="240"></div>
           </div>
+          <label for="sAuto">Switch the club speaker off after (hours, 0 = never)</label>
+          <input type="number" id="sAuto" min="0" max="24">
           <label for="sBlock">Blocked artists (comma separated)</label>
           <input type="text" id="sBlock" placeholder="e.g. Crazy Frog">
           <div style="margin-top:14px"><button class="btn" type="submit" id="sBtn">Save rules</button></div>
@@ -436,6 +448,9 @@ var NEEDS_SERVICE = 5;
     bad_track: "That song couldn't be found.",
     spotify_refused: "Spotify refused that one.",
     admin_password: "Wrong admin password (or too many tries: wait an hour).",
+    speaker_off: "Range Radio is switched off. Neil switches it on at the club.",
+    not_club_speaker: "The club speaker isn't playing. Press Start to begin.",
+    club_speaker_missing: "Spotify isn't open on the club speaker phone. Open Spotify on it, then try again.",
     search_failed: "Spotify search isn't working, so the playlist was left as it was.",
     client_not_set: "Paste the Spotify Client ID and Secret into the top of the service script first."
   };
@@ -517,14 +532,16 @@ var NEEDS_SERVICE = 5;
     $("#npCard").classList.toggle("playing", !!(p && p.playing));
     if (!j.connected) {
       setNp(null, "Not connected yet", "Neil needs to connect Spotify on the admin page.");
+    } else if (j.speaker === "off") {
+      setNp(null, "Range Radio is off", "The club speaker gets switched on at practice.");
     } else if (!p) {
-      setNp(null, "Nothing playing", "Open Spotify on the speaker phone" + (rules.hasPlaylist ? ", then press Start." : "."));
+      setNp(null, "Nothing playing", rules.hasPlaylist ? "Press Start to play the archery playlist." : "");
     } else if (!t) {
       setNp(null, p.playing ? "Playing something that isn't a song" : "Paused", "");
     } else {
       setNp(t, t.name, t.artists);
     }
-    $("#startBtn").hidden = !(j.connected && rules.hasPlaylist && rules.membersControl && !(p && p.playing));
+    $("#startBtn").hidden = !(j.connected && j.speaker !== "off" && rules.hasPlaylist && rules.membersControl && !(p && p.playing));
     var canCtl = !!rules.membersControl && !!p;
     ["#cPrev", "#cPlay", "#cNext"].forEach(function (s) { $(s).disabled = !canCtl; });
     $("#playIcon").innerHTML = p && p.playing ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
@@ -532,7 +549,7 @@ var NEEDS_SERVICE = 5;
     var showVol = !!(p && p.device && p.device.canVolume && rules.membersVolume);
     $("#volRow").hidden = !showVol;
     if (showVol) $("#volText").textContent = "Volume " + (p.device.volume == null ? "?" : p.device.volume) + "%";
-    $("#devText").textContent = p && p.device ? "Playing on " + p.device.name : "";
+    $("#devText").textContent = p && p.device ? "Playing on the club speaker" : "";
     $("#rulesText").textContent = "You can add " + (rules.requestsPerPerson || 3) + " songs every " + (rules.requestWindowMins || 30) + " minutes, and each song only once." + (rules.blockExplicit ? " Explicit songs are blocked." : "");
 
     $("#ownCard").hidden = !rules.playlistUrl;
@@ -674,11 +691,28 @@ var NEEDS_SERVICE = 5;
     $("#adOpenPl").hidden = !j.playlistId; if (j.playlistId) $("#adOpenPl").href = "https://open.spotify.com/playlist/" + j.playlistId;
     $("#adOpenPicks").hidden = !j.picksId; if (j.picksId) $("#adOpenPicks").href = "https://open.spotify.com/playlist/" + j.picksId;
 
-    var devs = j.devices || [];
+    var sp = j.speaker || {}, devs = j.devices || [];
+    var spk = $("#adSpk");
+    if (sp.mode === "club" && sp.live) {
+      spk.className = "spk on";
+      spk.innerHTML = "<b>On:</b> members can play on <b>" + esc(sp.deviceName || "the club speaker") + "</b>" +
+        (sp.until ? " until " + new Date(sp.until).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) + (new Date(sp.until).toDateString() !== new Date().toDateString() ? " tomorrow" : "") + ", then it switches itself off." : ", until you switch it off.");
+    } else if (sp.mode === "club" && sp.deviceId) {
+      spk.className = "spk off";
+      spk.innerHTML = "<b>Off:</b> the timer has run out. Members can't play anything. Club speaker: <b>" + esc(sp.deviceName) + "</b>.";
+    } else {
+      spk.className = "spk off";
+      spk.innerHTML = "<b>No speaker:</b> members can't play anything." + (sp.deviceName ? " Club speaker when switched on: <b>" + esc(sp.deviceName) + "</b>." : " Choose a club speaker below.");
+    }
+    $("#adSpkOn").hidden = !(sp.deviceId && !(sp.mode === "club" && sp.live));
+    $("#adSpkOn").textContent = "Switch on " + (sp.deviceName || "club speaker");
+    $("#adSpkOff").hidden = sp.mode !== "club";
     $("#adDevices").innerHTML = devs.length ? devs.map(function (d) {
-      var mine = s.deviceId === d.id;
-      return '<div class="dev"><span><b>' + esc(d.name) + '</b> <span class="muted small">' + esc(d.type) + (d.active ? ", playing" : "") + (d.canVolume ? "" : ", no remote volume") + '</span></span>' +
-        (mine ? '<span class="small" style="color:var(--ok-text)">Club speaker</span>' : '<button class="btn sm ghost" type="button" data-dev="' + esc(d.id) + '" data-name="' + esc(d.name) + '">Use this</button>') + '</div>';
+      var club = sp.deviceId && (sp.deviceId === d.id || sp.deviceName === d.name);
+      return '<div class="dev"><span><b>' + esc(d.name) + '</b> ' + (club ? '<span class="pill">Club speaker</span> ' : '<span class="muted small">Test</span> ') +
+        '<span class="muted small">' + esc(d.type) + (d.active ? ", playing" : "") + (d.canVolume ? "" : ", no remote volume") + '</span></span><span class="acts">' +
+        (club ? "" : '<button class="btn sm ghost" type="button" data-club="' + esc(d.id) + '" data-name="' + esc(d.name) + '">Make club speaker</button>') +
+        '<button class="btn sm line" type="button" data-test="' + esc(d.id) + '" data-name="' + esc(d.name) + '">Play here</button></span></div>';
     }).join("") : '<p class="empty">No devices found' + (j.deviceError ? " (" + esc(j.deviceError) + ")" : "") + '. Open Spotify on the speaker phone and press Refresh.</p>';
     var act = devs.filter(function (d) { return d.active; })[0];
     $("#adVol").disabled = !(act && act.canVolume);
@@ -694,6 +728,7 @@ var NEEDS_SERVICE = 5;
     $("#sMaxVol").value = s.maxVolume; $("#sSkip").value = s.skipCooldownSecs;
     $("#sPer").value = s.requestsPerPerson; $("#sWin").value = s.requestWindowMins;
     $("#sBlock").value = s.blockedArtists || "";
+    $("#sAuto").value = s.autoOffHours;
 
     var link = location.origin + location.pathname + (s.clubCode ? "?code=" + encodeURIComponent(s.clubCode) : "");
     $("#adLink").textContent = link;
@@ -739,17 +774,29 @@ var NEEDS_SERVICE = 5;
   $("#adStart").addEventListener("click", function () { adStart("main", this); });
   $("#adStartPicks").addEventListener("click", function () { adStart("picks", this); });
 
-  $("#adDevices").addEventListener("click", function (ev) {
-    var b = ev.target.closest("[data-dev]"); if (!b) return;
+  function speaker(body, b, okMsg) {
     busy(b, true);
-    var id = b.getAttribute("data-dev"), name = b.getAttribute("data-name");
-    adPost({ action: "admin.settings", settings: { deviceId: id, deviceName: name } }).then(function () {
-      return adPost({ action: "admin.transfer", deviceId: id, play: false });
-    }).then(function (j) {
-      if (j && !j.ok) show($("#adDevStatus"), "warn", errText(j)); else show($("#adDevStatus"), "ok", esc(name) + " is now the club speaker.");
+    body.action = "admin.speaker";
+    adPost(body).then(function (j) {
+      if (!j.ok) { show($("#adDevStatus"), "warn", errText(j)); return; }
+      show($("#adDevStatus"), "ok", okMsg);
       adLoad();
     }).catch(function (e) { show($("#adDevStatus"), "err", errText(e)); }).finally(function () { busy(b, false); });
+  }
+  $("#adDevices").addEventListener("click", function (ev) {
+    var c = ev.target.closest("[data-club]"), t = ev.target.closest("[data-test]");
+    if (c) speaker({ mode: "club", deviceId: c.getAttribute("data-club"), deviceName: c.getAttribute("data-name") }, c, esc(c.getAttribute("data-name")) + " is the club speaker and is switched on.");
+    if (t) {
+      busy(t, true);
+      adPost({ action: "admin.start", deviceId: t.getAttribute("data-test") }, { timeout: 30000 }).then(function (j) {
+        if (!j.ok) { show($("#adDevStatus"), "warn", errText(j)); return; }
+        show($("#adDevStatus"), "ok", "Playing the archery playlist on " + esc(j.device) + ". Members can't control it.");
+        setTimeout(adLoad, 1500);
+      }).catch(function (e) { show($("#adDevStatus"), "err", errText(e)); }).finally(function () { busy(t, false); });
+    }
   });
+  $("#adSpkOn").addEventListener("click", function () { speaker({ mode: "club" }, this, "Switched on."); });
+  $("#adSpkOff").addEventListener("click", function () { speaker({ mode: "off" }, this, "Switched off. Members can't play anything until you switch it back on."); });
   $$("[data-cmd]").forEach(function (b) {
     b.addEventListener("click", function () {
       busy(b, true);
@@ -775,7 +822,7 @@ var NEEDS_SERVICE = 5;
       clubCode: $("#sCode").value.trim(), membersControl: $("#sControl").checked, membersVolume: $("#sVolume").checked,
       savePicks: $("#sPicks").checked, picksIntoMain: $("#sMain").checked, sharePlaylist: $("#sShare").checked, applyShare: true, blockExplicit: $("#sExplicit").checked,
       maxVolume: +$("#sMaxVol").value, skipCooldownSecs: +$("#sSkip").value, requestsPerPerson: +$("#sPer").value,
-      requestWindowMins: +$("#sWin").value, blockedArtists: $("#sBlock").value
+      requestWindowMins: +$("#sWin").value, autoOffHours: +$("#sAuto").value, blockedArtists: $("#sBlock").value
     };
     adPost({ action: "admin.settings", settings: s }).then(function (j) {
       if (!j.ok) { show($("#sStatus"), "err", errText(j)); return; }
