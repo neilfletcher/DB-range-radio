@@ -22,7 +22,7 @@
 <script>
 /* ===== Settings: paste the Apps Script web app URL (ends in /exec) ===== */
 var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec";
-var NEEDS_SERVICE = 8;
+var NEEDS_SERVICE = 9;
 </script>
 <style>
   :root {
@@ -439,7 +439,7 @@ var NEEDS_SERVICE = 8;
     opts = opts || {};
     var url = String(window.SERVICE_URL || "").trim();
     if (!/^https:\/\/script\.google\.com\/\S+\/exec$/.test(url)) return Promise.reject(new Error("notset"));
-    var tries = opts.tries || 1, limit = opts.timeout || 20000;
+    var tries = opts.tries || 1, limit = opts.timeout || 30000;
     function once(n) {
       var ctrl = window.AbortController ? new AbortController() : null;
       var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, limit) : null;
@@ -519,32 +519,54 @@ var NEEDS_SERVICE = 8;
   $("#whoBtn").addEventListener("click", function () { openGate(); });
 
   /* ============================ now playing ============================== */
-  var st = null, stAt = 0, pollT = null, tickT = null, inflight = false;
+  var st = null, stAt = 0, pollT = null, tickT = null, inflight = false, polling = false, fails = 0;
   function startPoll() {
     stopPoll();
+    polling = true;
+    // show the last thing this phone saw straight away while the live answer loads
+    try {
+      var saved = JSON.parse(store("rrState") || "null");
+      if (saved && saved.j && Date.now() - saved.at < 6 * 3600000) { render(saved.j); stAt = saved.at; }
+    } catch (e) {}
     refresh();
-    pollT = setInterval(function () { if (!document.hidden) refresh(); }, 8000);
     tickT = setInterval(tick, 1000);
   }
-  function stopPoll() { clearInterval(pollT); clearInterval(tickT); pollT = tickT = null; }
-  document.addEventListener("visibilitychange", function () { if (!document.hidden && pollT) refresh(); });
+  function stopPoll() { polling = false; clearTimeout(pollT); clearInterval(tickT); pollT = tickT = null; }
+  function schedule() {
+    clearTimeout(pollT);
+    if (!polling) return;
+    var playing = st && st.player && st.player.playing;
+    var wait = fails ? Math.min(30000, 8000 * fails) : (playing ? 10000 : 20000);
+    pollT = setTimeout(function () { if (!document.hidden) refresh(); else schedule(); }, wait);
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && polling) refresh(); });
 
   function refresh() {
     if (inflight) return;
     inflight = true;
-    post({ action: "state", code: me.code }, { tries: 2 }).then(function (j) {
-      if (!j.ok && j.error === "club_code") { me.code = ""; store("rrCode", null); openGate("The club code has changed. Ask on the line for the new one."); return; }
-      if (!j.ok) { show($("#npStatus"), "warn", errText(j)); return; }
+    clearTimeout(pollT);
+    var warn = $("#npStatus");
+    post({ action: "state", code: me.code }, { tries: 1, timeout: 25000 }).then(function (j) {
+      if (!j.ok && j.error === "club_code") { me.code = ""; store("rrCode", null); openGate("The club code has changed. Ask on the line for the new one."); polling = false; return; }
+      if (!j.ok && j.error === "busy") throw new Error("busy");
+      if (!j.ok) { fails = 0; show(warn, "warn", errText(j)); return; }
+      fails = 0;
+      if (warn.dataset.slow === "1") { warn.dataset.slow = ""; hide(warn); }
       render(j);
-    }).catch(function (e) { show($("#npStatus"), "warn", errText(e)); })
-      .finally(function () { inflight = false; });
+      store("rrState", JSON.stringify({ at: Date.now(), j: j }));
+      if (!plTracks && !plLoading) setTimeout(function () { loadPlaylist(false, true); }, 3000);
+    }).catch(function () {
+      // keep showing the last answer; only mention it if it keeps happening
+      fails++;
+      if (fails >= 3 && warn.dataset.sticky !== "1") { warn.dataset.slow = "1"; show(warn, "warn", "Range Radio is slow to answer right now. Still trying…"); }
+    }).finally(function () { inflight = false; schedule(); });
   }
 
   function render(j) {
     st = j; stAt = Date.now();
     var npS = $("#npStatus");
     var p = j.player, t = p && p.track, rules = j.rules || {};
-    if (npS.dataset.sticky !== "1") hide(npS);
+    if (npS.dataset.sticky !== "1" && npS.dataset.slow !== "1") hide(npS);
     $("#npCard").classList.toggle("playing", !!(p && p.playing));
     if (!j.connected) {
       setNp(null, "Not connected yet", "Neil needs to connect Spotify on the admin page.");
@@ -612,7 +634,7 @@ var NEEDS_SERVICE = 8;
     post({ action: "control", code: me.code, cmd: cmd, who: me.name, did: me.did, rid: rid() }, { tries: 2 }).then(function (j) {
       if (!j.ok) { npS.dataset.sticky = "1"; show(npS, "warn", errText(j)); setTimeout(function () { npS.dataset.sticky = ""; }, 6000); return; }
       track("radio_" + cmd);
-      setTimeout(function () { inflight = false; refresh(); }, 600);
+      setTimeout(refresh, 700);
     }).catch(function (e) { show(npS, "err", errText(e)); })
       .finally(function () { busy(btn, false); });
   }
@@ -656,7 +678,7 @@ var NEEDS_SERVICE = 8;
       track("radio_add");
       b.classList.remove("busy"); b.textContent = "Added"; b.disabled = true; b.className = "btn sm ghost";
       show(statusEl, "ok", "<b>" + esc(x.name) + "</b> is in the queue. It'll play after the songs already waiting.");
-      setTimeout(function () { inflight = false; refresh(); }, 800);
+      setTimeout(refresh, 900);
     }).catch(function (e) { show(statusEl, "err", errText(e)); busy(b, false); });
   }
   $("#results").addEventListener("click", function (ev) {
@@ -665,15 +687,27 @@ var NEEDS_SERVICE = 8;
   });
 
   /* ============================ the playlist ============================= */
-  var plTracks = null, plAt = 0, plShown = [];
-  function loadPlaylist(force) {
-    if (!force && plTracks && Date.now() - plAt < 600000) return drawPlaylist();
+  var plTracks = null, plAt = 0, plShown = [], plLoading = false;
+  try {
+    var savedPl = JSON.parse(store("rrList") || "null");
+    if (savedPl && savedPl.t) { plTracks = savedPl.t; plAt = savedPl.at; }
+  } catch (e) {}
+  function plCount() { $("#plCount").textContent = plTracks && plTracks.length ? "(" + plTracks.length + " songs)" : ""; }
+  plCount();
+  function loadPlaylist(force, quiet) {
+    if (plTracks) drawPlaylist();
+    if (!force && plTracks && Date.now() - plAt < 600000) return;
+    if (plLoading) return;
+    plLoading = true;
     post({ action: "playlist", code: me.code }, { tries: 2, timeout: 30000 }).then(function (j) {
-      if (!j.ok) { show($("#plStatus"), "warn", errText(j)); return; }
+      if (!j.ok) { if (!quiet && !plTracks) show($("#plStatus"), "warn", errText(j)); return; }
       plTracks = j.tracks || []; plAt = Date.now();
-      $("#plCount").textContent = plTracks.length ? "(" + plTracks.length + " songs)" : "";
+      store("rrList", JSON.stringify({ at: plAt, t: plTracks }));
+      hide($("#plStatus"));
+      plCount();
       drawPlaylist();
-    }).catch(function (e) { show($("#plStatus"), "err", errText(e)); });
+    }).catch(function (e) { if (!quiet && !plTracks) show($("#plStatus"), "err", errText(e)); })
+      .finally(function () { plLoading = false; });
   }
   function drawPlaylist() {
     var f = $("#plFilter").value.trim().toLowerCase();
