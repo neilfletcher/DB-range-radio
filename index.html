@@ -22,7 +22,7 @@
 <script>
 /* ===== Settings: paste the Apps Script web app URL (ends in /exec) ===== */
 var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec";
-var NEEDS_SERVICE = 7;
+var NEEDS_SERVICE = 8;
 </script>
 <style>
   :root {
@@ -147,6 +147,12 @@ var NEEDS_SERVICE = 7;
   .feed li:first-child { border-top: 0; }
   .feed time { color: var(--muted); font-size: 13px; margin-right: 6px; font-variant-numeric: tabular-nums; }
   .empty { color: var(--muted); font-size: 15px; padding: 6px 0; }
+  #plCard summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  #plCard summary::-webkit-details-marker { display: none; }
+  #plCard summary h2 { margin: 0; }
+  #plCard .chev { width: 10px; height: 10px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .15s; margin-right: 4px; }
+  #plCard details[open] .chev { transform: rotate(-135deg); }
+  #plCard .tag.pick { background: var(--warn-bg); color: var(--warn-text); white-space: nowrap; }
   .rules { font-size: 13.5px; color: var(--muted); text-align: center; margin: 4px 0 0; }
 
   /* ---- admin */
@@ -251,6 +257,16 @@ var NEEDS_SERVICE = 7;
     <section class="card">
       <h2>Up next</h2>
       <ul class="tracks" id="nextList"><li class="empty">Nothing queued yet.</li></ul>
+    </section>
+
+    <section class="card" id="plCard">
+      <details id="plDetails">
+        <summary><h2>In the playlist <span class="muted small" id="plCount"></span></h2><span class="chev" aria-hidden="true"></span></summary>
+        <p class="small muted" style="margin-top:4px">Every song in the archery playlist, A to Z. It plays on shuffle; tap Add to hear one sooner.</p>
+        <input type="search" id="plFilter" placeholder="Filter by song or artist" aria-label="Filter the playlist">
+        <div class="status" id="plStatus"></div>
+        <ul class="tracks" id="plList" style="margin-top:8px"><li class="empty">Loading…</li></ul>
+      </details>
     </section>
 
     <section class="card" id="ownCard" hidden>
@@ -633,18 +649,46 @@ var NEEDS_SERVICE = 7;
       }).join("");
     }).catch(function (e) { show($("#addStatus"), "err", errText(e)); }).finally(function () { busy(b, false); });
   });
-  $("#results").addEventListener("click", function (ev) {
-    var b = ev.target.closest("[data-add]");
-    if (!b) return;
-    var x = lastResults[+b.getAttribute("data-add")];
+  function addSong(x, b, statusEl) {
     busy(b, true);
     post({ action: "add", code: me.code, id: x.id, who: me.name, did: me.did, rid: rid() }, { tries: 2 }).then(function (j) {
-      if (!j.ok) { show($("#addStatus"), "warn", errText(j)); busy(b, false); return; }
+      if (!j.ok) { show(statusEl, "warn", errText(j)); busy(b, false); return; }
       track("radio_add");
       b.classList.remove("busy"); b.textContent = "Added"; b.disabled = true; b.className = "btn sm ghost";
-      show($("#addStatus"), "ok", "<b>" + esc(x.name) + "</b> is in the queue. It'll play after the songs already waiting.");
+      show(statusEl, "ok", "<b>" + esc(x.name) + "</b> is in the queue. It'll play after the songs already waiting.");
       setTimeout(function () { inflight = false; refresh(); }, 800);
-    }).catch(function (e) { show($("#addStatus"), "err", errText(e)); busy(b, false); });
+    }).catch(function (e) { show(statusEl, "err", errText(e)); busy(b, false); });
+  }
+  $("#results").addEventListener("click", function (ev) {
+    var b = ev.target.closest("[data-add]");
+    if (b) addSong(lastResults[+b.getAttribute("data-add")], b, $("#addStatus"));
+  });
+
+  /* ============================ the playlist ============================= */
+  var plTracks = null, plAt = 0, plShown = [];
+  function loadPlaylist(force) {
+    if (!force && plTracks && Date.now() - plAt < 600000) return drawPlaylist();
+    post({ action: "playlist", code: me.code }, { tries: 2, timeout: 30000 }).then(function (j) {
+      if (!j.ok) { show($("#plStatus"), "warn", errText(j)); return; }
+      plTracks = j.tracks || []; plAt = Date.now();
+      $("#plCount").textContent = plTracks.length ? "(" + plTracks.length + " songs)" : "";
+      drawPlaylist();
+    }).catch(function (e) { show($("#plStatus"), "err", errText(e)); });
+  }
+  function drawPlaylist() {
+    var f = $("#plFilter").value.trim().toLowerCase();
+    plShown = (plTracks || []).filter(function (x) { return !f || (x.name + " " + x.artists).toLowerCase().indexOf(f) >= 0; });
+    $("#plList").innerHTML = !plTracks ? '<li class="empty">Loading…</li>' : !plTracks.length ? '<li class="empty">The playlist hasn\'t been built yet.</li>' :
+      !plShown.length ? '<li class="empty">No songs match.</li>' :
+      plShown.map(function (x, i) {
+        return li(x, (x.pick ? '<span class="tag pick">Members\' pick</span>' : "") + '<button class="btn sm" type="button" data-pl="' + i + '">Add</button>');
+      }).join("");
+  }
+  $("#plDetails").addEventListener("toggle", function () { if (this.open) loadPlaylist(); });
+  $("#plFilter").addEventListener("input", drawPlaylist);
+  $("#plList").addEventListener("click", function (ev) {
+    var b = ev.target.closest("[data-pl]");
+    if (b) addSong(plShown[+b.getAttribute("data-pl")], b, $("#plStatus"));
   });
 
   /* ================================ admin ================================ */
