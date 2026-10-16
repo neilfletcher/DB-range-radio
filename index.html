@@ -22,7 +22,7 @@
 <script>
 /* ===== Settings: paste the Apps Script web app URL (ends in /exec) ===== */
 var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec";
-var NEEDS_SERVICE = 2;
+var NEEDS_SERVICE = 5;
 </script>
 <style>
   :root {
@@ -248,6 +248,12 @@ var NEEDS_SERVICE = 2;
       <ul class="tracks" id="nextList"><li class="empty">Nothing queued yet.</li></ul>
     </section>
 
+    <section class="card" id="ownCard" hidden>
+      <h2>No club speaker today?</h2>
+      <p class="small muted">Play the archery playlist on your own phone or speaker. It's the same list, members' picks included.</p>
+      <a class="btn" id="ownLink" target="_blank" rel="noopener">Open the playlist in Spotify</a>
+    </section>
+
     <section class="card">
       <h2>On the line</h2>
       <ul class="feed" id="feed"><li class="empty">No requests yet today.</li></ul>
@@ -324,6 +330,7 @@ var NEEDS_SERVICE = 2;
           <label class="switch"><input type="checkbox" id="sControl"> Members can play, pause and skip</label>
           <label class="switch"><input type="checkbox" id="sVolume"> Members can change the volume</label>
           <label class="switch"><input type="checkbox" id="sPicks"> Save requested songs to the members' picks playlist</label>
+          <label class="switch"><input type="checkbox" id="sShare"> Show members a link to the archery playlist, so they can play it on their own phone (makes the playlist public on Spotify)</label>
           <label class="switch"><input type="checkbox" id="sMain"> Also add requested songs to the archery playlist (so they come round again in the shuffle)</label>
           <label class="switch"><input type="checkbox" id="sExplicit"> Block explicit songs (juniors shoot with us)</label>
           <div class="grid2">
@@ -526,8 +533,10 @@ var NEEDS_SERVICE = 2;
     $("#volRow").hidden = !showVol;
     if (showVol) $("#volText").textContent = "Volume " + (p.device.volume == null ? "?" : p.device.volume) + "%";
     $("#devText").textContent = p && p.device ? "Playing on " + p.device.name : "";
-    $("#rulesText").textContent = "You can add " + (rules.requestsPerPerson || 3) + " songs every " + (rules.requestWindowMins || 30) + " minutes." + (rules.blockExplicit ? " Explicit songs are blocked." : "");
+    $("#rulesText").textContent = "You can add " + (rules.requestsPerPerson || 3) + " songs every " + (rules.requestWindowMins || 30) + " minutes, and each song only once." + (rules.blockExplicit ? " Explicit songs are blocked." : "");
 
+    $("#ownCard").hidden = !rules.playlistUrl;
+    if (rules.playlistUrl) $("#ownLink").href = rules.playlistUrl;
     var nl = $("#nextList"), next = j.next || [];
     nl.innerHTML = next.length ? next.map(function (x) { return li(x, x.by ? '<span class="tag">' + esc(x.by) + "</span>" : ""); }).join("") : '<li class="empty">Nothing queued yet. Add a song!</li>';
 
@@ -680,6 +689,7 @@ var NEEDS_SERVICE = 2;
     $("#sVolume").checked = !!s.membersVolume;
     $("#sPicks").checked = !!s.savePicks;
     $("#sMain").checked = !!s.picksIntoMain;
+    $("#sShare").checked = !!s.sharePlaylist;
     $("#sExplicit").checked = !!s.blockExplicit;
     $("#sMaxVol").value = s.maxVolume; $("#sSkip").value = s.skipCooldownSecs;
     $("#sPer").value = s.requestsPerPerson; $("#sWin").value = s.requestWindowMins;
@@ -763,7 +773,7 @@ var NEEDS_SERVICE = 2;
     var b = $("#sBtn"); busy(b, true);
     var s = {
       clubCode: $("#sCode").value.trim(), membersControl: $("#sControl").checked, membersVolume: $("#sVolume").checked,
-      savePicks: $("#sPicks").checked, picksIntoMain: $("#sMain").checked, blockExplicit: $("#sExplicit").checked,
+      savePicks: $("#sPicks").checked, picksIntoMain: $("#sMain").checked, sharePlaylist: $("#sShare").checked, applyShare: true, blockExplicit: $("#sExplicit").checked,
       maxVolume: +$("#sMaxVol").value, skipCooldownSecs: +$("#sSkip").value, requestsPerPerson: +$("#sPer").value,
       requestWindowMins: +$("#sWin").value, blockedArtists: $("#sBlock").value
     };
