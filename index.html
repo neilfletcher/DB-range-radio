@@ -22,7 +22,7 @@
 <script>
 /* ===== Settings: paste the Apps Script web app URL (ends in /exec) ===== */
 var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec";
-var NEEDS_SERVICE = 1;
+var NEEDS_SERVICE = 2;
 </script>
 <style>
   :root {
@@ -324,6 +324,7 @@ var NEEDS_SERVICE = 1;
           <label class="switch"><input type="checkbox" id="sControl"> Members can play, pause and skip</label>
           <label class="switch"><input type="checkbox" id="sVolume"> Members can change the volume</label>
           <label class="switch"><input type="checkbox" id="sPicks"> Save requested songs to the members' picks playlist</label>
+          <label class="switch"><input type="checkbox" id="sMain"> Also add requested songs to the archery playlist (so they come round again in the shuffle)</label>
           <label class="switch"><input type="checkbox" id="sExplicit"> Block explicit songs (juniors shoot with us)</label>
           <div class="grid2">
             <div><label for="sMaxVol">Highest volume for members (%)</label><input type="number" id="sMaxVol" min="10" max="100"></div>
@@ -428,6 +429,7 @@ var NEEDS_SERVICE = 1;
     bad_track: "That song couldn't be found.",
     spotify_refused: "Spotify refused that one.",
     admin_password: "Wrong admin password (or too many tries: wait an hour).",
+    search_failed: "Spotify search isn't working, so the playlist was left as it was.",
     client_not_set: "Paste the Spotify Client ID and Secret into the top of the service script first."
   };
   function errText(j) {
@@ -437,6 +439,7 @@ var NEEDS_SERVICE = 1;
     }
     if (!j) return "Something went wrong.";
     if (j.detail && /^(limit|duplicate|blocked|cooldown)$/.test(j.error)) return esc(j.detail);
+    if (j.error === "search_failed") return esc(ERR.search_failed) + " Spotify said: " + esc(j.detail);
     return esc(ERR[j.error] || ("Something went wrong (" + (j.error || "unknown") + (j.detail ? ": " + j.detail : "") + ")."));
   }
 
@@ -655,7 +658,7 @@ var NEEDS_SERVICE = 1;
     $("#adConnected").hidden = !j.connected;
 
     var info = [];
-    if (j.lastBuild) info.push(j.lastBuild.count + " songs, built " + new Date(j.lastBuild.when).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) + "." +
+    if (j.lastBuild) info.push(j.lastBuild.count + " archery songs" + (j.lastBuild.picks ? " + " + j.lastBuild.picks + " members' picks" : "") + ", built " + new Date(j.lastBuild.when).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) + "." +
       (j.lastBuild.missing && j.lastBuild.missing.length ? " Not found on Spotify: " + esc(j.lastBuild.missing.join("; ")) + "." : ""));
     $("#adPlInfo").innerHTML = info.length ? info.join(" ") : "Not built yet. Connect Spotify, then press Build.";
     $("#adBuild").textContent = j.playlistId ? "Rebuild the archery playlist" : "Build the archery playlist";
@@ -676,6 +679,7 @@ var NEEDS_SERVICE = 1;
     $("#sControl").checked = !!s.membersControl;
     $("#sVolume").checked = !!s.membersVolume;
     $("#sPicks").checked = !!s.savePicks;
+    $("#sMain").checked = !!s.picksIntoMain;
     $("#sExplicit").checked = !!s.blockExplicit;
     $("#sMaxVol").value = s.maxVolume; $("#sSkip").value = s.skipCooldownSecs;
     $("#sPer").value = s.requestsPerPerson; $("#sWin").value = s.requestWindowMins;
@@ -710,7 +714,7 @@ var NEEDS_SERVICE = 1;
     show($("#adPlStatus"), "warn", "Finding the songs on Spotify. This takes up to a minute.");
     adPost({ action: "admin.buildPlaylist" }, { timeout: 180000 }).then(function (j) {
       if (!j.ok) { show($("#adPlStatus"), "err", errText(j)); return; }
-      show($("#adPlStatus"), "ok", "Done: " + j.count + " songs in <b>Duston Bowmen Range Radio</b>." + (j.missing.length ? " Couldn't find: " + esc(j.missing.join("; ")) + "." : ""));
+      show($("#adPlStatus"), "ok", "Done: " + j.count + " archery songs" + (j.picks ? " + " + j.picks + " members' picks" : "") + " in <b>Duston Bowmen Range Radio</b>, played on shuffle." + (j.missing.length ? " Couldn't find: " + esc(j.missing.join("; ")) + "." : "") + (j.searchError ? " (Spotify said: " + esc(j.searchError) + ")" : ""));
       adLoad();
     }).catch(function (e) { show($("#adPlStatus"), "err", errText(e)); }).finally(function () { busy(b, false); });
   });
@@ -759,7 +763,7 @@ var NEEDS_SERVICE = 1;
     var b = $("#sBtn"); busy(b, true);
     var s = {
       clubCode: $("#sCode").value.trim(), membersControl: $("#sControl").checked, membersVolume: $("#sVolume").checked,
-      savePicks: $("#sPicks").checked, blockExplicit: $("#sExplicit").checked,
+      savePicks: $("#sPicks").checked, picksIntoMain: $("#sMain").checked, blockExplicit: $("#sExplicit").checked,
       maxVolume: +$("#sMaxVol").value, skipCooldownSecs: +$("#sSkip").value, requestsPerPerson: +$("#sPer").value,
       requestWindowMins: +$("#sWin").value, blockedArtists: $("#sBlock").value
     };
