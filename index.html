@@ -22,7 +22,7 @@
 <script>
 /* ===== Settings: paste the Apps Script web app URL (ends in /exec) ===== */
 var SERVICE_URL = "https://script.google.com/macros/s/AKfycbwpSgqEsBQDEbmymNAOKhzdWvYGzZp9YsnFd-KOwHisi-iNn-W2ffyhya6X0eSc2VAO/exec";
-var NEEDS_SERVICE = 11;
+var NEEDS_SERVICE = 13;
 </script>
 <style>
   :root {
@@ -339,7 +339,7 @@ var NEEDS_SERVICE = 11;
         <div id="adDevices"><p class="empty">No devices found.</p></div>
         <details class="sw" style="margin-top:14px">
           <summary><b>Bluetooth speaker switch links</b></summary>
-          <p class="small muted" style="margin-top:8px">Your phone opens these when the Bluetooth speaker connects or disconnects (MacroDroid, see the set-up guide), so Range Radio only plays while the speaker is connected. Keep them private.</p>
+          <p class="small muted" style="margin-top:8px">Your phone opens these when the Bluetooth speaker connects or disconnects (the free Automate app, see the set-up guide), so Range Radio only plays while the speaker is connected. Keep them private.</p>
           <label>When the speaker connects: switch on and start the music</label>
           <code class="copy" id="swPlay"></code>
           <button class="btn sm ghost" type="button" data-copy="swPlay">Copy</button>
@@ -551,7 +551,7 @@ var NEEDS_SERVICE = 11;
     clearTimeout(pollT);
     if (!polling) return;
     var playing = st && st.player && st.player.playing;
-    var wait = fails ? Math.min(30000, 8000 * fails) : (playing ? 10000 : 20000);
+    var wait = fails ? Math.min(30000, 8000 * fails) : (playing ? 6000 : 15000);
     pollT = setTimeout(function () { if (!document.hidden) refresh(); else schedule(); }, wait);
   }
   document.addEventListener("visibilitychange", function () { if (!document.hidden && polling) refresh(); });
@@ -643,14 +643,29 @@ var NEEDS_SERVICE = 11;
   }
 
   /* ============================== controls =============================== */
+  // Show the change straight away, then correct it with Spotify's answer.
+  function guess(cmd) {
+    if (!st || !st.player) return;
+    var g = JSON.parse(JSON.stringify(st));
+    if (cmd === "next" && g.next && g.next.length) {
+      g.player.track = g.next.shift(); g.player.progressMs = 0; g.player.playing = true;
+    } else if (cmd === "pause") g.player.playing = false;
+    else if (cmd === "play") g.player.playing = true;
+    else return;
+    var at = stAt;
+    if (cmd === "pause" && st.player.playing) g.player.progressMs = st.player.progressMs + (Date.now() - at);
+    render(g);
+  }
   function control(cmd, btn) {
     busy(btn, true);
-    var npS = $("#npStatus");
+    var npS = $("#npStatus"), before = st;
+    guess(cmd);
     post({ action: "control", code: me.code, cmd: cmd, who: me.name, did: me.did, rid: rid() }, { tries: 2 }).then(function (j) {
-      if (!j.ok) { npS.dataset.sticky = "1"; show(npS, "warn", errText(j)); setTimeout(function () { npS.dataset.sticky = ""; }, 6000); return; }
+      if (!j.ok) { if (before) render(before); npS.dataset.sticky = "1"; show(npS, "warn", errText(j)); setTimeout(function () { npS.dataset.sticky = ""; }, 6000); return; }
       track("radio_" + cmd);
-      setTimeout(refresh, 700);
-    }).catch(function (e) { show(npS, "err", errText(e)); })
+      if (j.state && j.state.ok) { render(j.state); store("rrState", JSON.stringify({ at: Date.now(), j: j.state })); schedule(); }
+      else setTimeout(refresh, 700);
+    }).catch(function (e) { if (before) render(before); show(npS, "err", errText(e)); })
       .finally(function () { busy(btn, false); });
   }
   $("#cPlay").addEventListener("click", function () { control(st && st.player && st.player.playing ? "pause" : "play", this); });
@@ -906,7 +921,7 @@ var NEEDS_SERVICE = 11;
     adPost({ action: "admin.newSwitchKey" }).then(function (j) {
       if (!j.ok) { show($("#adDevStatus"), "warn", errText(j)); return; }
       drawSwitch(j.switchKey);
-      show($("#adDevStatus"), "ok", "New links made. Paste them into MacroDroid; the old ones no longer work.");
+      show($("#adDevStatus"), "ok", "New links made. Paste them into your Automate flow; the old ones no longer work.");
     }).catch(function (e) { show($("#adDevStatus"), "err", errText(e)); }).finally(function () { busy(b, false); });
   });
   $("#adSpkOn").addEventListener("click", function () { speaker({ mode: "club" }, this, "Switched on."); });
